@@ -1,10 +1,12 @@
 # trading-dev
 
-A Python paper trading and market simulation tool. Pulls near-real-time market data for US and TSX stocks, simulates trades against live prices, evaluates strategy performance, and calculates tax implications under Canadian tax law — no real order execution.
+A Python paper trading and market simulation tool. Pulls near-real-time market data for US and TSX stocks, simulates trades against live prices, evaluates strategy performance, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters — no real order execution.
 
 ---
 
 ## Overview
+
+### Live Bot
 
 | Component | File | Description |
 |-----------|------|-------------|
@@ -14,6 +16,14 @@ A Python paper trading and market simulation tool. Pulls near-real-time market d
 | Tax reporter | `tax_report.py` | Capital gains vs business income comparison (Ontario) |
 | Scheduler | `market.py` | Market hours + holiday detection (NYSE + TSX) |
 | CLI | `main.py` | Entry point for all commands |
+
+### Backtester
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Grid search | `backtester/backtest.py` | Replays history across 300 parameter combinations |
+| Database | `backtester/db.py` | SQLite storage for all runs, results, and equity curves |
+| Results DB | `backtester/results/trading.db` | All backtest runs (gitignored) |
 
 ---
 
@@ -31,6 +41,8 @@ venv/bin/pip install -r requirements.txt
 
 ## Usage
 
+### Live Bot
+
 ```bash
 # Run automatically every 15 minutes during market hours (Ctrl+C to stop)
 python main.py start
@@ -47,6 +59,33 @@ python main.py portfolio
 # Generate tax report
 python main.py report
 ```
+
+### Backtester
+
+```bash
+# Standard 1-year grid search (252 trading days)
+python -m backtester.backtest
+
+# Custom period and simulation window
+python -m backtester.backtest --period 65d --days 30
+
+# With slippage and spread costs
+python -m backtester.backtest --slippage 0.0005 --spread 0.0003
+
+# Named run with notes
+python -m backtester.backtest --name "1y_with_costs" --notes "Slippage model added"
+```
+
+**Backtester flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--period` | `2y` | yfinance download period |
+| `--days` | `252` | Number of simulation days |
+| `--name` | auto | Run name (stored in DB) |
+| `--slippage` | `0.0` | Slippage % per side |
+| `--spread` | `0.0` | Spread % per side |
+| `--notes` | `""` | Notes stored with this run |
 
 ---
 
@@ -88,6 +127,20 @@ Every trade is written to `data/trades.json` with:
 
 This file is the single source of truth for all P&L and tax calculations.
 
+### Backtester
+- Downloads up to 2 years of daily OHLCV data for the full universe
+- Pre-computes scan metrics for each simulation day (done once, reused across all combinations)
+- Grid searches 300 parameter combinations: `min_rel_volume` × `min_change_pct` × `take_profit_pct` × `stop_loss_pct`
+- Captures daily equity curve per combination (for charting)
+- Optionally applies slippage and spread costs to simulate real-world execution
+- Saves all results to SQLite DB and exports a CSV per run
+
+### Database
+All backtest runs persist to `backtester/results/trading.db` (SQLite):
+- `test_runs` — metadata per run (name, type, date range, costs, notes)
+- `test_results` — one row per parameter combination per run
+- `equity_curves` — daily portfolio value per combination (used for charting)
+
 ---
 
 ## Tax Report
@@ -118,7 +171,7 @@ Run `python main.py report` to see:
 
 ## Portfolio
 
-- Starting balance: **$100.00**
+- Starting balance: **$5,000**
 - State persisted in `data/portfolio.json` between runs
 - `data/` directory is excluded from git (contains live trading state)
 
@@ -128,17 +181,23 @@ Run `python main.py report` to see:
 
 ```
 /trading/v1.0.0/
-├── main.py            # CLI entry point
-├── fetcher.py         # Market data and scanner
-├── simulator.py       # Portfolio and trade execution
-├── strategy.py        # Buy/sell signal logic
-├── tax_report.py      # Canadian tax analysis
-├── market.py          # Market hours and holiday calendar
-├── requirements.txt   # Python dependencies
-├── data/              # Runtime data (gitignored)
-│   ├── portfolio.json # Current portfolio state
-│   └── trades.json    # Full trade audit log
-└── venv/              # Virtual environment (gitignored)
+├── main.py                        # CLI entry point
+├── fetcher.py                     # Market data and scanner
+├── simulator.py                   # Portfolio and trade execution
+├── strategy.py                    # Buy/sell signal logic
+├── tax_report.py                  # Canadian tax analysis
+├── market.py                      # Market hours and holiday calendar
+├── requirements.txt               # Python dependencies
+├── backtester/
+│   ├── backtest.py                # Grid search backtester
+│   ├── db.py                      # SQLite database layer
+│   └── results/                   # Gitignored
+│       ├── trading.db             # All backtest runs (SQLite)
+│       └── *.csv                  # Per-run CSV exports
+├── data/                          # Gitignored
+│   ├── portfolio.json             # Current portfolio state
+│   └── trades.json                # Full trade audit log
+└── venv/                          # Gitignored
 ```
 
 ---
@@ -154,8 +213,25 @@ Run `python main.py report` to see:
 | `MAX_POSITION_PCT` | `simulator.py` | `0.20` | Max portfolio % per position |
 | `MIN_POSITION_PCT` | `simulator.py` | `0.05` | Min portfolio % per position |
 | `CYCLE_INTERVAL_SECONDS` | `main.py` | `900` | Seconds between cycles (15 min) |
-| `STARTING_CASH` | `simulator.py` | `100.0` | Starting portfolio balance |
+| `STARTING_CASH` | `simulator.py` | `5000.0` | Starting portfolio balance |
 | `BASE_SALARY` | `tax_report.py` | `0` | Annual non-trading income for tax calc |
+
+---
+
+## Backtest Results
+
+### 30-day grid search (no transaction costs)
+- **Best:** +19.2% — `min_rel_vol=1.0`, `take_profit=1%`, `stop_loss=-1%`
+- **Worst:** -4.5% — `take_profit=5%`, `stop_loss=-3%`
+- 279/300 combinations profitable
+
+### 1-year grid search (no transaction costs)
+- **Best:** +89.5% — `min_rel_vol=1.75`, `min_change=0%`, `take_profit=1%`, `stop_loss=-5%`
+- **Average across all 300:** +37.9%
+- 298/300 combinations profitable
+- Key finding: take_profit=1% dominates (avg +64.2%) vs take_profit=7% (avg +16.3%)
+
+> Transaction cost modeling (slippage + spread) not yet applied — results represent frictionless simulation.
 
 ---
 
@@ -165,3 +241,4 @@ Run `python main.py report` to see:
 - Dual-class TSX tickers (e.g. `TECK.B.TO`, `RCI.B.TO`) are not supported by yfinance and are silently skipped
 - `BRK.B` (Berkshire Hathaway B) is not available via yfinance and is silently skipped
 - The bot does not short sell — only long positions
+- Backtest results reflect survivorship bias — only current index constituents are tested
