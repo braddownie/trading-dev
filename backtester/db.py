@@ -66,6 +66,37 @@ def init_db():
                 ON test_results(run_id);
             CREATE INDEX IF NOT EXISTS idx_curves_result
                 ON equity_curves(result_id);
+
+            CREATE TABLE IF NOT EXISTS rolling_wf_runs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                name          TEXT,
+                train_days    INTEGER,
+                test_days     INTEGER,
+                slippage_pct  REAL DEFAULT 0.0,
+                spread_pct    REAL DEFAULT 0.0,
+                starting_cash REAL,
+                created_at    TEXT,
+                notes         TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS rolling_wf_windows (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id            INTEGER REFERENCES rolling_wf_runs(id),
+                window_num        INTEGER,
+                train_start       TEXT,
+                train_end         TEXT,
+                test_start        TEXT,
+                test_end          TEXT,
+                best_params       TEXT,
+                train_return_pct  REAL,
+                test_return_pct   REAL,
+                strategy_balance  REAL,
+                benchmark_balance REAL,
+                beat_benchmark    INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rwf_windows_run
+                ON rolling_wf_windows(run_id);
         """)
 
 
@@ -129,6 +160,53 @@ def save_equity_curves(run_id: int, result_id: int, curve: list[dict]):
             (run_id, result_id, row["date"], row["portfolio_value"])
             for row in curve
         ])
+
+
+def save_rolling_wf_run(
+    name: str,
+    train_days: int,
+    test_days: int,
+    slippage_pct: float,
+    spread_pct: float,
+    starting_cash: float,
+    notes: str = "",
+) -> int:
+    with get_connection() as conn:
+        cur = conn.execute("""
+            INSERT INTO rolling_wf_runs
+                (name, train_days, test_days, slippage_pct, spread_pct,
+                 starting_cash, created_at, notes)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (name, train_days, test_days, slippage_pct, spread_pct,
+              starting_cash, datetime.now().isoformat(), notes))
+        return cur.lastrowid
+
+
+def save_rolling_wf_window(
+    run_id: int,
+    window_num: int,
+    train_start: str,
+    train_end: str,
+    test_start: str,
+    test_end: str,
+    best_params_json: str,
+    train_return_pct: float,
+    test_return_pct: float,
+    strategy_balance: float,
+    benchmark_balance: float,
+    beat_benchmark: int,
+) -> int:
+    with get_connection() as conn:
+        cur = conn.execute("""
+            INSERT INTO rolling_wf_windows
+                (run_id, window_num, train_start, train_end, test_start, test_end,
+                 best_params, train_return_pct, test_return_pct,
+                 strategy_balance, benchmark_balance, beat_benchmark)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (run_id, window_num, train_start, train_end, test_start, test_end,
+              best_params_json, train_return_pct, test_return_pct,
+              strategy_balance, benchmark_balance, beat_benchmark))
+        return cur.lastrowid
 
 
 # --- Query helpers (used by web UI) ---

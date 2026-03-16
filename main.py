@@ -162,29 +162,38 @@ def cmd_walkforward():
     cli_main(sys.argv[2:])
 
 
+def cmd_rolling_walkforward():
+    """Run rolling walk-forward analysis (quarterly windows, ~2015 to present, compounding $5k)."""
+    from backtester.rolling_walkforward import cli_main
+    cli_main(sys.argv[2:])
+
+
 def cmd_help():
     print("""
 Usage: python main.py <command>
 
 Commands:
-  start         Run automatically every 15 min during market hours (Ctrl+C to stop)
-  run           Run a single cycle manually (ignores market hours — useful for testing)
-  scan          Scan the market and display top candidates
-  portfolio     Show current positions and P&L
-  report        Tax report
-  walkforward   Walk-forward analysis (--train-years, --test-years, --slippage, --spread, --workers)
-  help          Show this message
+  start                Run automatically every 15 min during market hours (Ctrl+C to stop)
+  run                  Run a single cycle manually (ignores market hours — useful for testing)
+  scan                 Scan the market and display top candidates
+  portfolio            Show current positions and P&L
+  report               Tax report
+  walkforward          Walk-forward analysis (--train-years, --test-years, --slippage, --spread, --workers)
+  rolling-walkforward  Rolling quarterly walk-forward, 2015→present, compounding $5k vs 7% benchmark
+                         (--slippage, --spread, --workers, --name, --notes)
+  help                 Show this message
 """)
 
 
 COMMANDS = {
-    "start":       cmd_start,
-    "run":         cmd_run,
-    "scan":        cmd_scan,
-    "portfolio":   cmd_portfolio,
-    "report":      cmd_report,
-    "walkforward": cmd_walkforward,
-    "help":        cmd_help,
+    "start":               cmd_start,
+    "run":                 cmd_run,
+    "scan":                cmd_scan,
+    "portfolio":           cmd_portfolio,
+    "report":              cmd_report,
+    "walkforward":         cmd_walkforward,
+    "rolling-walkforward": cmd_rolling_walkforward,
+    "help":                cmd_help,
 }
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ import yfinance as yf
 
 # Allow imports from parent directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from fetcher import get_universe
+from fetcher import get_sp500_tickers
 from backtester.db import init_db, save_run, save_results, save_equity_curves
 
 STARTING_CASH = 5000.0
@@ -225,6 +225,19 @@ def run_simulation(
     take_profit = params["take_profit_pct"]
     stop_loss   = params["stop_loss_pct"]
 
+    if not daily_scans:
+        return {
+            **params,
+            "total_return_%": 0.0,
+            "final_value":    STARTING_CASH,
+            "realized_pnl":   0.0,
+            "total_trades":   0,
+            "wins":           0,
+            "losses":         0,
+            "win_rate_%":     0.0,
+            "_equity_curve":  [],
+        }
+
     portfolio    = BacktestPortfolio(slippage_pct, spread_pct)
     total_trades = 0
     wins         = 0
@@ -369,8 +382,8 @@ if __name__ == "__main__":
     init_db()
 
     # 1. Universe
-    print("Fetching ticker universe...")
-    tickers = get_universe()
+    print("Fetching ticker universe (S&P 500 only)...")
+    tickers = get_sp500_tickers()
     print(f"  {len(tickers)} tickers\n")
 
     # 2. History

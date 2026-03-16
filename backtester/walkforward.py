@@ -18,7 +18,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from fetcher import get_universe
+from fetcher import get_sp500_tickers
 from backtester.backtest import (
     load_history, compute_daily_scans, run_grid_search, run_simulation, STARTING_CASH,
 )
@@ -43,8 +43,8 @@ def run_walk_forward(
     init_db()
 
     # 1. Universe
-    print("Fetching ticker universe...")
-    tickers = get_universe()
+    print("Fetching ticker universe (S&P 500 only)...")
+    tickers = get_sp500_tickers()
     print(f"  {len(tickers)} tickers\n")
 
     # 2. History — extra year of buffer for rolling metric warmup
