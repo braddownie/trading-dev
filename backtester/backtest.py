@@ -6,8 +6,10 @@ to find the most profitable configuration.
 Results saved to SQLite DB at backtester/results/trading.db
 CSV export also written for each run.
 """
+import os
 import sys
 import itertools
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime
 
@@ -270,33 +272,46 @@ def run_simulation(
 
 # --- Grid search ---
 
+def _run_combo(args: tuple) -> dict:
+    """Top-level worker function (required for ProcessPoolExecutor pickling)."""
+    daily_scans, params, slippage_pct, spread_pct = args
+    return run_simulation(daily_scans, params, slippage_pct, spread_pct)
+
+
 def run_grid_search(
     daily_scans: dict,
     slippage_pct: float = 0.0,
     spread_pct: float = 0.0,
+    max_workers: int = None,
 ) -> tuple[pd.DataFrame, list[list[dict]]]:
     """Returns (results_df, equity_curves) — one curve list per result row."""
     keys   = list(PARAM_GRID.keys())
     combos = list(itertools.product(*PARAM_GRID.values()))
     total  = len(combos)
+    workers = max_workers or max(1, (os.cpu_count() or 2) - 2)
 
-    print(f"Running {total} parameter combinations...\n")
-    results      = []
-    equity_curves = []
+    print(f"Running {total} parameter combinations across {workers} workers...\n")
 
-    for i, values in enumerate(combos, 1):
-        params = dict(zip(keys, values))
-        result = run_simulation(daily_scans, params, slippage_pct, spread_pct)
-        equity_curves.append(result.pop("_equity_curve"))
-        results.append(result)
-        if i % 50 == 0 or i == total:
-            print(f"  {i}/{total} complete...")
+    work = [(daily_scans, dict(zip(keys, values)), slippage_pct, spread_pct)
+            for values in combos]
 
-    df = pd.DataFrame(results).sort_values("total_return_%", ascending=False).reset_index(drop=True)
+    indexed_results = [None] * total
+    done = 0
+
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_run_combo, args): i for i, args in enumerate(work)}
+        for future in as_completed(futures):
+            i = futures[future]
+            indexed_results[i] = future.result()
+            done += 1
+            if done % 50 == 0 or done == total:
+                print(f"  {done}/{total} complete...")
+
+    equity_curves = [r.pop("_equity_curve") for r in indexed_results]
+
+    df = pd.DataFrame(indexed_results).sort_values("total_return_%", ascending=False).reset_index(drop=True)
     df.insert(0, "rank", df.index + 1)
 
-    # Reorder equity curves to match sorted df
-    original_order = list(range(len(results)))
     sorted_indices = df.index.tolist()
     equity_curves  = [equity_curves[i] for i in sorted_indices]
     df             = df.reset_index(drop=True)
@@ -316,6 +331,7 @@ if __name__ == "__main__":
     parser.add_argument("--slippage", default=0.0,   type=float, help="Slippage %% per side (default: 0.0)")
     parser.add_argument("--spread",   default=0.0,   type=float, help="Spread %% per side (default: 0.0)")
     parser.add_argument("--notes",    default="",    help="Notes to store with this run")
+    parser.add_argument("--workers",  default=None,  type=int, help="Worker processes (default: cpu_count - 2)")
     args = parser.parse_args()
 
     start_time = datetime.now()
@@ -345,6 +361,7 @@ if __name__ == "__main__":
         daily_scans,
         slippage_pct=args.slippage,
         spread_pct=args.spread,
+        max_workers=args.workers,
     )
 
     # 5. Save to DB
