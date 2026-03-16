@@ -21,9 +21,10 @@ A Python paper trading and market simulation tool. Pulls near-real-time market d
 
 | Component | File | Description |
 |-----------|------|-------------|
-| Grid search | `backtester/backtest.py` | Replays history across 300 parameter combinations (S&P 500 only) |
+| Grid search | `backtester/backtest.py` | Replays history across 8,640 parameter combinations (S&P 500 only) |
 | Walk-forward | `backtester/walkforward.py` | Train Year 1, test Year 2 out-of-sample (S&P 500 only) |
-| Rolling walk-forward | `backtester/rolling_walkforward.py` | Quarterly windows 2015→present, compounds $5k, vs 7% benchmark (S&P 500 only) |
+| Rolling walk-forward | `backtester/rolling_walkforward.py` | Sliding train/test windows 2015→present, compounds $5k vs benchmark |
+| RWF Optimizer | `backtester/rwf_optimizer.py` | 45-run matrix across reopt periods, training windows, and drawdown thresholds |
 | Database | `backtester/db.py` | SQLite storage for all runs, results, and equity curves |
 | Results DB | `backtester/results/trading.db` | All backtest runs (gitignored) |
 
@@ -58,7 +59,7 @@ python main.py scan
 # Show current positions and live P&L
 python main.py portfolio
 
-# Generate tax report
+# Generate tax report (prompts for base salary at runtime)
 python main.py report
 ```
 
@@ -93,9 +94,19 @@ python -m backtester.backtest --name "1y_with_costs" --notes "Slippage model add
 python main.py walkforward
 python main.py walkforward --slippage 0.0005 --spread 0.0003
 
-# Rolling walk-forward (recommended — run in a screen session, takes a while)
+# Rolling walk-forward (quarterly windows, 2015→present)
 python main.py rolling-walkforward
-python main.py rolling-walkforward --slippage 0.0005 --spread 0.0003
+python main.py rolling-walkforward --slippage 0.0005 --spread 0.0003 --drawdown 15.0
+
+# Full 45-run optimizer matrix (run in a screen/tmux session — long-running)
+python main.py rwf-optimize
+python main.py rwf-optimize --workers 20
+
+# Resume an interrupted optimizer run
+python main.py rwf-optimize --resume <optimizer_run_id>
+
+# Quick smoke test (4 configs, 2-year history cap)
+python main.py rwf-optimize --test
 ```
 
 **Rolling walk-forward flags:**
@@ -104,9 +115,24 @@ python main.py rolling-walkforward --slippage 0.0005 --spread 0.0003
 |------|---------|-------------|
 | `--slippage` | `0.0005` | Slippage fraction per side |
 | `--spread` | `0.0003` | Spread fraction per side |
+| `--drawdown` | `None` | Max drawdown % before suppressing new buys |
+| `--train-days` | `252` | Training window in trading days |
+| `--test-days` | `63` | Test window in trading days |
 | `--workers` | cpu_count - 2 | Parallel worker processes |
 | `--name` | auto | Run name (stored in DB) |
 | `--notes` | `""` | Notes stored with this run |
+
+**RWF Optimizer flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--slippage` | `0.0005` | Slippage fraction per side |
+| `--spread` | `0.0003` | Spread fraction per side |
+| `--workers` | cpu_count - 2 | Parallel worker processes |
+| `--name` | auto | Run name (stored in DB) |
+| `--notes` | `""` | Notes stored with this run |
+| `--resume` | `None` | Resume an existing optimizer run by ID |
+| `--test` | off | Smoke test mode: 4 configs, 2-year history cap |
 
 ---
 
@@ -116,7 +142,7 @@ python main.py rolling-walkforward --slippage 0.0005 --spread 0.0003
 - Fetches the S&P 500 constituent list from Wikipedia
 - Downloads 32 days of daily OHLCV data via `yfinance` (~15 min delayed)
 - Filters tickers: price > $5, average volume > 500,000
-- Ranks by **relative volume** (today vs 30-day average)
+- Ranks by **relative volume** (today vs N-day average, configurable lookback)
 - Also calculates **ATR-14** and **% change on the day**
 
 ### Strategy — Momentum + Volume
@@ -148,11 +174,21 @@ This file is the single source of truth for all P&L and tax calculations.
 
 ### Backtester
 - Downloads daily OHLCV data for the S&P 500 universe
-- Pre-computes scan metrics for each simulation day (done once, reused across all combinations)
-- Grid searches 300 parameter combinations: `min_rel_volume` × `min_change_pct` × `take_profit_pct` × `stop_loss_pct`
+- Pre-computes scan metrics for each simulation day across all vol lookback periods (done once, reused across all combinations)
+- Grid searches **8,640 parameter combinations** across 6 dimensions:
+
+| Parameter | Values |
+|-----------|--------|
+| `min_rel_volume` | 1.0, 1.25, 1.5, 1.75, 2.0 |
+| `min_change_pct` | 0.0, 0.5, 1.0 |
+| `take_profit_pct` | 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0 |
+| `stop_loss_pct` | -1.0, -2.0, -3.0, -5.0, -7.0, -10.0 |
+| `max_position_pct` | 0.10, 0.15, 0.20 |
+| `vol_lookback` | 10, 20, 30, 60 days |
+
 - Parallelized with `ProcessPoolExecutor` — near-linear speedup with available CPU cores
 - Optionally applies slippage and spread costs to simulate real-world execution
-- Saves all results to SQLite DB and exports a CSV per run
+- Saves all results to SQLite DB
 
 ### Walk-Forward Analysis
 Tests whether parameters learned from historical data hold up out-of-sample.
@@ -163,12 +199,21 @@ Tests whether parameters learned from historical data hold up out-of-sample.
 - Answers: did the best params from training actually hold up?
 
 **Rolling walk-forward** (`rolling_walkforward.py`):
-- Slides a 1-year training window / 1-quarter test window across all data from 2015 to present
-- Shifts by one quarter each iteration (~36 windows total)
-- For each window: grid search on train year → best params → out-of-sample test quarter
-- Compounds a starting $5,000 through every test quarter sequentially
-- Compares the final strategy balance against a 7% annual benchmark (compounded quarterly)
+- Slides a configurable training window / test window across all data from 2015 to present
+- Shifts by one test period each iteration
+- For each window: grid search on train period → best params → out-of-sample test period
+- Compounds a starting $5,000 through every test period sequentially
+- Compares the final strategy balance against a 7% annual benchmark (compounded per period)
+- Supports optional drawdown protection: suppresses new buys when portfolio drops X% below peak
 - Answers: is this edge consistent across a decade of data, or was one period just lucky?
+
+**RWF Optimizer** (`rwf_optimizer.py`):
+- Runs a 45-combination matrix: 9 reoptimization configs × 5 drawdown thresholds
+- Reopt configs cover monthly, quarterly, and 6-monthly test periods with 3m/6m/1y/18m training windows
+- Drawdown thresholds tested: None, 10%, 15%, 16%, 20%
+- History loaded once and shared across all 45 runs
+- Results ranked by final compounded balance
+- Crash-safe: every window saved to DB as it completes; interrupted runs resume with `--resume`
 
 ### Database
 All runs persist to `backtester/results/trading.db` (SQLite):
@@ -176,7 +221,8 @@ All runs persist to `backtester/results/trading.db` (SQLite):
 - `test_results` — one row per parameter combination per run
 - `equity_curves` — daily portfolio value per combination (used for charting)
 - `rolling_wf_runs` — metadata per rolling walk-forward run
-- `rolling_wf_windows` — one row per quarterly window (params, returns, compounded balances)
+- `rolling_wf_windows` — one row per window (best params, returns, compounded balances)
+- `rwf_optimizer_runs` — metadata per optimizer matrix run
 
 ---
 
@@ -184,6 +230,7 @@ All runs persist to `backtester/results/trading.db` (SQLite):
 
 Run `python main.py report` to see:
 
+- Prompts for base salary at runtime (not stored anywhere)
 - All closed trades with holding periods and realized P&L
 - Open positions (excluded from tax calculation until sold)
 - Side-by-side tax comparison:
@@ -196,7 +243,6 @@ Run `python main.py report` to see:
   - Win/loss ratio
 
 ### Tax Assumptions
-- Base salary: **$0**
 - Province: **Ontario**
 - Brackets: **2025 Federal + Ontario** (hardcoded)
 - Ontario surtax applied where applicable
@@ -226,9 +272,10 @@ Run `python main.py report` to see:
 ├── market.py                      # Market hours and holiday calendar
 ├── requirements.txt               # Python dependencies
 ├── backtester/
-│   ├── backtest.py                # Grid search backtester
+│   ├── backtest.py                # Grid search backtester (8,640 combos)
 │   ├── walkforward.py             # Single walk-forward analysis
-│   ├── rolling_walkforward.py     # Rolling quarterly walk-forward
+│   ├── rolling_walkforward.py     # Rolling walk-forward (variable windows)
+│   ├── rwf_optimizer.py           # 45-run optimizer matrix
 │   ├── db.py                      # SQLite database layer
 │   └── results/                   # Gitignored
 │       ├── trading.db             # All backtest runs (SQLite)
@@ -253,33 +300,33 @@ Run `python main.py report` to see:
 | `MIN_POSITION_PCT` | `simulator.py` | `0.05` | Min portfolio % per position |
 | `CYCLE_INTERVAL_SECONDS` | `main.py` | `900` | Seconds between cycles (15 min) |
 | `STARTING_CASH` | `simulator.py` | `5000.0` | Starting portfolio balance |
-| `BASE_SALARY` | `tax_report.py` | `0` | Annual non-trading income for tax calc |
 
 ---
 
 ## Backtest Results
 
-### 30-day grid search (no transaction costs)
-- **Best:** +19.2% — `min_rel_vol=1.0`, `take_profit=1%`, `stop_loss=-1%`
-- **Worst:** -4.5% — `take_profit=5%`, `stop_loss=-3%`
-- 279/300 combinations profitable
-
 ### 1-year grid search (no transaction costs)
 - **Best:** +89.5% — `min_rel_vol=1.75`, `min_change=0%`, `take_profit=1%`, `stop_loss=-5%`
-- **Average across all 300:** +37.9%
+- **Average across all combinations:** +37.9%
 - 298/300 combinations profitable
-- Key finding: take_profit=1% dominates (avg +64.2%) vs take_profit=7% (avg +16.3%)
 
 ### 1-year grid search (with transaction costs: slippage=0.05%, spread=0.03%)
 - **Best:** +79.3% — `min_rel_vol=1.5`, `min_change=0%`, `take_profit=1%`, `stop_loss=-5%`
 - **Average:** +21.4%, **Median:** +21.5%
 - 283/300 profitable, 17 losing
 - Transaction costs roughly halved average returns vs frictionless
-- stop_loss=-1% severely impacted (-51% hit rate) — wider stops (-2%+) held up better
-- Realistic annual expectation after costs: ~21% avg, ~79% best case
 
-### Rolling walk-forward (2015→present, realistic costs)
-- Results pending
+### Rolling walk-forward (2015→2026, 40 quarterly windows, quarterly_1y config, no drawdown limit)
+- **Strategy:** $5,000 → $16,562 **(+231.2%)**
+- **Benchmark:** $5,000 → $9,836 **(+96.7%)** [7% annual, compounded quarterly]
+- **Delta:** +134.5 percentage points vs benchmark
+- Profitable quarters: 31/40 (77.5%)
+- Beat benchmark: 26/40 (65.0%)
+- Best quarter: +27.9% (Q1 2019)
+- Worst quarter: -26.1% (Q1 2020, COVID crash)
+- Max drawdown: -28.0% (2022 bear market)
+
+> Note: results reflect survivorship bias (current S&P 500 constituents only). Full 45-run optimizer results pending.
 
 ---
 
@@ -288,6 +335,7 @@ Run `python main.py report` to see:
 - Data is ~15 minutes delayed (Yahoo Finance free tier) — suitable for paper trading simulation, not HFT
 - The backtester uses S&P 500 only — this matches the intended live strategy via Alpaca (USD account, no per-trade FX)
 - The live bot scans S&P 500 + TSX 60 but will be narrowed to S&P 500 when connected to Alpaca
-- `BRK.B` (Berkshire Hathaway B) is not available via yfinance and is silently skipped
+- `BRK.B` (Berkshire Hathaway B) and `BF.B` are not available via yfinance and are silently skipped
 - The bot does not short sell — only long positions
 - Backtest results reflect survivorship bias — only current index constituents are tested
+- The optimizer is CPU-bound; parallelism scales linearly with physical core count (hyperthreading provides minimal benefit)
