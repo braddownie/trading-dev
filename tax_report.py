@@ -6,9 +6,6 @@ from pathlib import Path
 DATA_DIR = Path("data")
 TRADES_FILE = DATA_DIR / "trades.json"
 
-# --- Constants ---
-BASE_SALARY = 0
-
 # Federal brackets 2025
 FEDERAL_BRACKETS = [
     (57_375,       0.1500),
@@ -108,10 +105,16 @@ def _parse_trades() -> tuple[list[dict], list[dict]]:
 def generate_report():
     closed, open_buys = _parse_trades()
 
+    try:
+        base_salary = float(input("Enter your base salary (CAD): $").replace(",", "").strip())
+    except (ValueError, EOFError):
+        print("Invalid input — defaulting to $0 base salary.")
+        base_salary = 0.0
+
     W = 66
     print(f"\n{'='*W}")
     print(f"  TAX REPORT  —  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  Base salary: ${BASE_SALARY:,}  |  Province: Ontario  |  Tax year: {datetime.now().year}")
+    print(f"  Base salary: ${base_salary:,.0f}  |  Province: Ontario  |  Tax year: {datetime.now().year}")
     print(f"{'='*W}")
 
     # ── Closed trades ──────────────────────────────────────────────
@@ -155,17 +158,17 @@ def generate_report():
         print("\n  No realized gains or losses yet — nothing to calculate.\n")
         return
 
-    tax_salary_only = total_tax(BASE_SALARY)
+    tax_salary_only = total_tax(base_salary)
 
     # Capital gains (50% inclusion)
     cg_inclusion     = total_pnl * 0.50
-    cg_total_income  = BASE_SALARY + cg_inclusion
+    cg_total_income  = base_salary + cg_inclusion
     cg_tax           = total_tax(cg_total_income)
     cg_incremental   = round(cg_tax - tax_salary_only, 2)
     cg_after_tax     = round(total_pnl - cg_incremental, 4)
 
     # Business income (100% inclusion)
-    bi_total_income  = BASE_SALARY + total_pnl
+    bi_total_income  = base_salary + total_pnl
     bi_tax           = total_tax(bi_total_income)
     bi_incremental   = round(bi_tax - tax_salary_only, 2)
     bi_after_tax     = round(total_pnl - bi_incremental, 4)
@@ -174,7 +177,7 @@ def generate_report():
     advantage  = round(abs(cg_after_tax - bi_after_tax), 4)
 
     print(f"""
-  Tax on salary alone ($0)       : ${tax_salary_only:>10.2f}
+  Tax on salary alone (${base_salary:,.0f})       : ${tax_salary_only:>10.2f}
 
   {"":30}  {"Capital Gains":>14}  {"Business Income":>15}
   {"─"*W}
