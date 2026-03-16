@@ -7,6 +7,7 @@ from fetcher import get_universe, fetch_history, calculate_metrics
 from market import open_markets, filter_tickers_to_open_markets, market_status_line
 from simulator import Portfolio
 from strategy import buy_signals, sell_signals
+from tax_report import generate_report
 
 CYCLE_INTERVAL_SECONDS = 15 * 60  # 15 minutes
 
@@ -145,6 +146,11 @@ def cmd_portfolio():
     portfolio.summary(current_prices)
 
 
+def cmd_report():
+    """Generate tax report from trade log."""
+    generate_report()
+
+
 def cmd_help():
     print("""
 Usage: python main.py <command>
@@ -164,6 +170,7 @@ COMMANDS = {
     "run": cmd_run,
     "scan": cmd_scan,
     "portfolio": cmd_portfolio,
+    "report": cmd_report,
     "help": cmd_help,
 }
 
