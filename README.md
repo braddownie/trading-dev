@@ -43,7 +43,6 @@ The rolling walk-forward has several free variables: how often to reoptimize (mo
 - Add monthly reoptimization command (re-runs backtester on trailing 12 months, suggests updated params — human reviews before applying)
 - Survivorship bias correction (currently using present-day S&P 500 constituents; historical constituents would give more accurate results)
 - Web UI for browsing results and triggering runs
-- Real-money deployment via Alpaca (USD account) after 6 months of paper trading validation
 
 ---
 
