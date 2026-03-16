@@ -1,6 +1,71 @@
 # trading-dev
 
-A Python paper trading and market simulation tool. Pulls near-real-time market data for S&P 500 stocks, simulates trades against live prices, evaluates strategy performance, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters — no real order execution.
+A Python paper trading and market simulation tool built from scratch. Pulls near-real-time market data for S&P 500 stocks, simulates trades against live prices, evaluates strategy performance out-of-sample, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters across a decade of market history — no real order execution.
+
+---
+
+## Project Journey
+
+This project was built iteratively, one validated component at a time. Here's the story of how it evolved:
+
+### Stage 1 — Live Bot
+Started with a basic momentum scanner: scan the S&P 500 for unusual relative volume and positive price movement, paper trade with a $5,000 portfolio, log everything. The live bot runs every 15 minutes during market hours and persists state between sessions.
+
+### Stage 2 — Backtester
+Added a grid search backtester to evaluate whether the strategy's parameters were actually optimal, or just guessed. Discovered that **take profit at 1% dramatically outperforms take profit at 7%** on a 1-year backtest — counterintuitive but consistent. Transaction costs (slippage + spread) roughly halved average returns, making realistic cost modeling a non-negotiable requirement.
+
+Key finding: frictionless best was +89.5%, realistic best dropped to +79.3%, and average fell from +37.9% to +21.4%. The strategy survives costs but the margin is real.
+
+### Stage 3 — Walk-Forward Validation
+A grid search on historical data proves nothing by itself — it will always find parameters that fit the past. Added walk-forward validation: train on one period, test on the next unseen period. This is the standard methodology used in professional quantitative research.
+
+Expanded to a **rolling walk-forward**: slide a training window across 10 years of data, test each quarter out-of-sample, compound the results into a single portfolio. This answers the real question: *is this edge consistent across a decade of varied market conditions, or did we just get lucky in one period?*
+
+**Preliminary result (quarterly_1y config, no drawdown limit, 40 windows 2016→2026):**
+- Strategy: $5,000 → $16,562 (+231.2%)
+- Benchmark: $5,000 → $9,836 (+96.7%) [7% annual]
+- Delta: +134.5 percentage points
+- Profitable quarters: 31/40 (77.5%) | Beat benchmark: 26/40 (65.0%)
+- Worst quarter: -26.1% (Q1 2020, COVID crash) | Max drawdown: -28.0% (2022 bear market)
+
+### Stage 4 — Optimizer (in progress)
+The rolling walk-forward has several free variables: how often to reoptimize (monthly, quarterly, 6-monthly), how long a training window to use (3 months to 18 months), and whether to suppress new buys during drawdowns (and at what threshold). Rather than guess, built a **45-run optimizer matrix** that tests every combination systematically:
+
+- 9 reoptimization configs (3 reopt periods × 3–4 training windows)
+- 5 drawdown thresholds (none, 10%, 15%, 16%, 20%)
+- Each config runs the full rolling walk-forward with 8,640 parameter combinations per window
+- Results ranked by final compounded balance
+
+**This run is currently in progress.** Results and winning configuration will be added here when complete.
+
+### What's Next
+- Wire the winning optimizer config into the live bot
+- Add monthly reoptimization command (re-runs backtester on trailing 12 months, suggests updated params — human reviews before applying)
+- Survivorship bias correction (currently using present-day S&P 500 constituents; historical constituents would give more accurate results)
+- Web UI for browsing results and triggering runs
+- Real-money deployment via Alpaca (USD account) after 6 months of paper trading validation
+
+---
+
+## Key Design Decisions
+
+**S&P 500 only (USD, via Alpaca)**
+Initially scanned both S&P 500 and TSX 60, but TSX introduces per-trade FX conversion costs (~0.5–1.5%) that would dwarf any edge. Alpaca is USD-only, so limiting to S&P 500 eliminates FX risk entirely and simplifies live deployment.
+
+**No perpetual auto-reoptimization**
+Tempting to re-run the optimizer after every market session and auto-apply the latest "best" parameters. Rejected — this is a fast path to overfitting live. Instead: monthly periodic reoptimization with human review. Only switch parameters if improvement exceeds a meaningful threshold.
+
+**Realistic transaction costs from the start**
+Modeled slippage (0.05% per side) and spread (0.03% per side) from day one. Results without these are misleading — the strategy needed to prove itself with costs included before any further development.
+
+**Walk-forward over in-sample optimization**
+Any parameter set will look good in-sample. The only meaningful test is out-of-sample performance across varied market regimes. All reported results use parameters that were never seen during training.
+
+**Crash-safe optimizer**
+A full 45-run matrix takes days to run. Every window saves to SQLite immediately on completion. If the machine dies mid-run, `--resume <id>` picks up exactly where it left off.
+
+**Tax treatment built in**
+Canadian capital gains vs business income treatment materially affects after-tax returns. The tax reporter calculates both sides using current Ontario + federal brackets so the real return is always visible.
 
 ---
 
@@ -100,7 +165,6 @@ python main.py rolling-walkforward --slippage 0.0005 --spread 0.0003 --drawdown 
 
 # Full 45-run optimizer matrix (run in a screen/tmux session — long-running)
 python main.py rwf-optimize
-python main.py rwf-optimize --workers 20
 
 # Resume an interrupted optimizer run
 python main.py rwf-optimize --resume <optimizer_run_id>
@@ -186,7 +250,7 @@ This file is the single source of truth for all P&L and tax calculations.
 | `max_position_pct` | 0.10, 0.15, 0.20 |
 | `vol_lookback` | 10, 20, 30, 60 days |
 
-- Parallelized with `ProcessPoolExecutor` — near-linear speedup with available CPU cores
+- Parallelized with `ProcessPoolExecutor` — near-linear speedup with physical core count
 - Optionally applies slippage and spread costs to simulate real-world execution
 - Saves all results to SQLite DB
 
@@ -326,16 +390,26 @@ Run `python main.py report` to see:
 - Worst quarter: -26.1% (Q1 2020, COVID crash)
 - Max drawdown: -28.0% (2022 bear market)
 
-> Note: results reflect survivorship bias (current S&P 500 constituents only). Full 45-run optimizer results pending.
+### Full 45-run optimizer
+*In progress — results to be added here on completion.*
+
+> **Note:** All results reflect survivorship bias — only current S&P 500 constituents are tested against their own historical data. Real-world historical results would be lower. A survivorship-bias-corrected run using historical constituent data is planned.
+
+---
+
+## Known Limitations
+
+- **Survivorship bias** — backtests use today's S&P 500 constituents. Companies that were delisted, went bankrupt, or were removed from the index are not included. This inflates historical returns.
+- **Delayed data** — Yahoo Finance free tier is ~15 minutes delayed. Suitable for end-of-day momentum strategies, not intraday or HFT.
+- **Sequential simulation** — walk-forward windows must run sequentially (each window's starting balance depends on the previous). Parallelism is applied only within the inner grid search.
+- **No shorting** — long-only strategy. Performance during sustained bear markets (e.g. 2022) is weak.
+- **Paper trading only** — no real order execution. Live slippage, liquidity constraints, and partial fills are not fully modelled.
 
 ---
 
 ## Notes
 
-- Data is ~15 minutes delayed (Yahoo Finance free tier) — suitable for paper trading simulation, not HFT
-- The backtester uses S&P 500 only — this matches the intended live strategy via Alpaca (USD account, no per-trade FX)
+- The backtester uses S&P 500 only — matches the intended live strategy via Alpaca (USD account, no per-trade FX)
 - The live bot scans S&P 500 + TSX 60 but will be narrowed to S&P 500 when connected to Alpaca
-- `BRK.B` (Berkshire Hathaway B) and `BF.B` are not available via yfinance and are silently skipped
-- The bot does not short sell — only long positions
-- Backtest results reflect survivorship bias — only current index constituents are tested
-- The optimizer is CPU-bound; parallelism scales linearly with physical core count (hyperthreading provides minimal benefit)
+- `BRK.B` and `BF.B` are not available via yfinance and are silently skipped (~501 of 503 tickers)
+- The optimizer is CPU-bound; parallelism scales linearly with physical core count (hyperthreading provides minimal benefit for this workload)
