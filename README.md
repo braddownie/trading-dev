@@ -1,6 +1,6 @@
 # trading-dev
 
-A Python paper trading and market simulation tool built from scratch. Pulls near-real-time market data for S&P 500 stocks, simulates trades against live prices, evaluates strategy performance out-of-sample, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters across a decade of market history — no real order execution.
+A Python paper trading and market simulation tool built from scratch as a learning project in quantitative strategy development. Pulls near-real-time market data for S&P 500 stocks, simulates trades against live prices, evaluates strategy performance out-of-sample, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters across a decade of market history — no real order execution.
 
 ---
 
