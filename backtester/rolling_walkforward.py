@@ -31,7 +31,7 @@ from fetcher import get_sp500_tickers
 from backtester.backtest import (
     load_history, compute_all_scan_lookbacks, run_grid_search, run_simulation, STARTING_CASH,
 )
-from backtester.db import init_db, save_rolling_wf_run, save_rolling_wf_window
+from backtester.db import init_db, save_rolling_wf_run, save_rolling_wf_window, get_rolling_wf_windows
 
 ANNUAL_BENCH = 0.07  # 7% annual benchmark
 
@@ -71,6 +71,7 @@ def run_rolling_walk_forward(
     reopt_label:       str   = "",
     optimizer_run_id:  int   = None,
     history:           object = None,  # pass pre-loaded history to avoid re-downloading
+    resume_run_id:     int   = None,   # if set, resume this existing run (skip completed windows)
 ):
     start_time = datetime.now()
     label = reopt_label or name or "rwf"
@@ -101,27 +102,62 @@ def run_rolling_walk_forward(
         sys.exit(1)
     print(f"  Windows    : {len(windows)}\n")
 
-    # 3. Save parent run record
-    run_name = name or f"rwf_{label}_{dd_label}_{start_time.strftime('%Y%m%d_%H%M%S')}"
-    run_id = save_rolling_wf_run(
-        name               = run_name,
-        train_days         = train_days,
-        test_days          = test_days,
-        slippage_pct       = slippage_pct,
-        spread_pct         = spread_pct,
-        starting_cash      = STARTING_CASH,
-        notes              = notes,
-        drawdown_threshold = max_drawdown_pct,
-        reopt_label        = reopt_label,
-        optimizer_run_id   = optimizer_run_id,
-    )
+    # 3. Save parent run record (or resume existing)
+    window_rows    = []
+    completed_nums = set()
+
+    if resume_run_id is not None:
+        run_id   = resume_run_id
+        existing = get_rolling_wf_windows(run_id)
+        for w in existing:
+            completed_nums.add(w["window_num"])
+            params = json.loads(w["best_params"])
+            window_rows.append({
+                "window":     w["window_num"],
+                "test_start": w["test_start"],
+                "test_end":   w["test_end"],
+                "params":     (f"{params['min_rel_volume']}/{params['min_change_pct']}/"
+                               f"{params['take_profit_pct']}/{params['stop_loss_pct']}/"
+                               f"{params.get('max_position_pct', 0.20)}/{params.get('vol_lookback', 30)}"),
+                "train_ret":  w["train_return_pct"],
+                "test_ret":   w["test_return_pct"],
+                "strat_bal":  w["strategy_balance"],
+                "bench_bal":  w["benchmark_balance"],
+                "beat":       "YES" if w["beat_benchmark"] else "NO",
+            })
+        if existing:
+            last              = existing[-1]
+            strategy_balance  = last["strategy_balance"]
+            benchmark_balance = last["benchmark_balance"]
+            print(f"  Resuming run_id={run_id}: {len(completed_nums)}/{len(windows)} windows complete, "
+                  f"strategy=${strategy_balance:,.2f}")
+        else:
+            strategy_balance  = STARTING_CASH
+            benchmark_balance = STARTING_CASH
+            print(f"  Resuming run_id={run_id}: no windows saved yet, starting from scratch")
+    else:
+        run_name = name or f"rwf_{label}_{dd_label}_{start_time.strftime('%Y%m%d_%H%M%S')}"
+        run_id   = save_rolling_wf_run(
+            name               = run_name,
+            train_days         = train_days,
+            test_days          = test_days,
+            slippage_pct       = slippage_pct,
+            spread_pct         = spread_pct,
+            starting_cash      = STARTING_CASH,
+            notes              = notes,
+            drawdown_threshold = max_drawdown_pct,
+            reopt_label        = reopt_label,
+            optimizer_run_id   = optimizer_run_id,
+        )
+        strategy_balance  = STARTING_CASH
+        benchmark_balance = STARTING_CASH
 
     # 4. Process each window sequentially
-    strategy_balance  = STARTING_CASH
-    benchmark_balance = STARTING_CASH
-    window_rows = []
-
     for i, (train_dates, test_dates) in enumerate(windows, 1):
+        if i in completed_nums:
+            print(f"  Window {i}/{len(windows)} — already saved, skipping")
+            continue
+
         train_start = str(train_dates[0])[:10]
         train_end   = str(train_dates[-1])[:10]
         test_start  = str(test_dates[0])[:10]

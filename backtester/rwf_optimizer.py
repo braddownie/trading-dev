@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fetcher import get_sp500_tickers
 from backtester.backtest import load_history, STARTING_CASH
-from backtester.db import init_db, save_optimizer_run, get_optimizer_results
+from backtester.db import init_db, save_optimizer_run, get_optimizer_results, find_rolling_wf_run
 from backtester.rolling_walkforward import run_rolling_walk_forward
 
 # --- Test matrix ---
@@ -50,6 +50,7 @@ def run_optimizer(
     name:         str   = "",
     notes:        str   = "",
     test_mode:    bool  = False,
+    resume_id:    int   = None,
 ):
     start_time = datetime.now()
     total_runs = len(REOPT_CONFIGS) * len(DRAWDOWN_THRESHOLDS)
@@ -63,16 +64,20 @@ def run_optimizer(
         print("*** TEST MODE — reduced matrix, 2-year history cap ***\n")
         reopt_configs     = [REOPT_CONFIGS[4], REOPT_CONFIGS[7]]  # quarterly_1y, 6mo_1y
         drawdown_thresholds = [None, 15.0]
-        history_cap       = pd.Timestamp("2017-01-01")
+        history_cap       = pd.Timestamp("2024-01-01")
     else:
         reopt_configs       = REOPT_CONFIGS
         drawdown_thresholds = DRAWDOWN_THRESHOLDS
         history_cap         = pd.Timestamp("2015-01-01")
 
-    # Save parent optimizer run
-    opt_name = name or f"rwf_opt{'_test' if test_mode else ''}_{start_time.strftime('%Y%m%d_%H%M%S')}"
-    opt_run_id = save_optimizer_run(name=opt_name, notes=notes)
-    print(f"Optimizer run ID: {opt_run_id}  ({opt_name})\n")
+    # Save parent optimizer run (or resume existing)
+    if resume_id is not None:
+        opt_run_id = resume_id
+        print(f"Resuming optimizer run ID: {opt_run_id}\n")
+    else:
+        opt_name   = name or f"rwf_opt{'_test' if test_mode else ''}_{start_time.strftime('%Y%m%d_%H%M%S')}"
+        opt_run_id = save_optimizer_run(name=opt_name, notes=notes)
+        print(f"Optimizer run ID: {opt_run_id}  ({opt_name})\n")
 
     # Load history once — reused across all 45 runs
     print("Fetching ticker universe (S&P 500 only)...")
@@ -97,6 +102,8 @@ def run_optimizer(
             print(f"  train_days={config['train_days']}  test_days={config['test_days']}  drawdown={drawdown}")
             print("=" * 70)
 
+            resume_run_id = find_rolling_wf_run(opt_run_id, config["label"], drawdown) if resume_id is not None else None
+
             run_rolling_walk_forward(
                 slippage_pct     = slippage_pct,
                 spread_pct       = spread_pct,
@@ -107,6 +114,7 @@ def run_optimizer(
                 reopt_label      = config["label"],
                 optimizer_run_id = opt_run_id,
                 history          = history,
+                resume_run_id    = resume_run_id,
             )
 
     # Print final ranked summary
@@ -167,6 +175,7 @@ def cli_main(argv=None):
     parser.add_argument("--name",     default="",                  help="Run name")
     parser.add_argument("--notes",    default="",                  help="Notes")
     parser.add_argument("--test",     action="store_true",         help="Test mode: 4 runs, 2-year history cap")
+    parser.add_argument("--resume",   default=None,   type=int,   help="Resume an existing optimizer run by ID")
     args = parser.parse_args(argv)
 
     run_optimizer(
@@ -176,6 +185,7 @@ def cli_main(argv=None):
         name         = args.name,
         notes        = args.notes,
         test_mode    = args.test,
+        resume_id    = args.resume,
     )
 
 

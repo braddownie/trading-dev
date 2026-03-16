@@ -218,6 +218,26 @@ def save_optimizer_run(name: str, notes: str = "") -> int:
         return cur.lastrowid
 
 
+def find_rolling_wf_run(optimizer_run_id: int, reopt_label: str, drawdown_threshold) -> int | None:
+    """Return run_id of an existing rolling_wf_run for this optimizer config, or None."""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT id FROM rolling_wf_runs
+            WHERE optimizer_run_id = ? AND reopt_label = ? AND drawdown_threshold IS ?
+            LIMIT 1
+        """, (optimizer_run_id, reopt_label, drawdown_threshold)).fetchone()
+        return row["id"] if row else None
+
+
+def get_rolling_wf_windows(run_id: int) -> list[dict]:
+    """Return all saved windows for a run, ordered by window_num."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT * FROM rolling_wf_windows WHERE run_id = ? ORDER BY window_num
+        """, (run_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+
 def get_optimizer_results(optimizer_run_id: int) -> pd.DataFrame:
     """Return summary of all rolling wf runs belonging to one optimizer run."""
     with get_connection() as conn:
