@@ -168,6 +168,12 @@ def cmd_rolling_walkforward():
     cli_main(sys.argv[2:])
 
 
+def cmd_rwf_optimize():
+    """Run full 45-combination optimizer matrix (reopt period × training window × drawdown threshold)."""
+    from backtester.rwf_optimizer import cli_main
+    cli_main(sys.argv[2:])
+
+
 def cmd_help():
     print("""
 Usage: python main.py <command>
@@ -179,7 +185,9 @@ Commands:
   portfolio            Show current positions and P&L
   report               Tax report
   walkforward          Walk-forward analysis (--train-years, --test-years, --slippage, --spread, --workers)
-  rolling-walkforward  Rolling quarterly walk-forward, 2015→present, compounding $5k vs 7% benchmark
+  rolling-walkforward  Rolling walk-forward, 2015→present, compounding $5k vs 7% benchmark
+                         (--slippage, --spread, --drawdown, --train-days, --test-days, --workers, --name, --notes)
+  rwf-optimize         Full 45-run optimizer matrix (reopt period × train window × drawdown threshold)
                          (--slippage, --spread, --workers, --name, --notes)
   help                 Show this message
 """)
@@ -193,6 +201,7 @@ COMMANDS = {
     "report":              cmd_report,
     "walkforward":         cmd_walkforward,
     "rolling-walkforward": cmd_rolling_walkforward,
+    "rwf-optimize":        cmd_rwf_optimize,
     "help":                cmd_help,
 }
 

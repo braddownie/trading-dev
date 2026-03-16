@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fetcher import get_sp500_tickers
 from backtester.backtest import (
-    load_history, compute_daily_scans, run_grid_search, run_simulation, STARTING_CASH,
+    load_history, compute_all_scan_lookbacks, run_grid_search, run_simulation, STARTING_CASH,
 )
 from backtester.db import init_db, save_run, save_results, save_equity_curves
 
@@ -74,14 +74,14 @@ def run_walk_forward(
     print(f"Train period : {train_start} → {train_end}  ({len(train_dates)} days)")
     print(f"Test period  : {test_start} → {test_end}  ({len(test_dates)} days)\n")
 
-    # 4. Pre-compute daily scans for both windows
+    # 4. Pre-compute daily scans for both windows (all vol_lookbacks)
     print("Pre-computing daily scans for train period...")
-    train_scans = compute_daily_scans(history, sim_dates=train_dates, max_workers=max_workers)
-    print(f"  {len(train_scans)} days ready")
+    train_scans = compute_all_scan_lookbacks(history, sim_dates=train_dates, max_workers=max_workers)
+    print(f"  Train scans ready")
 
     print("Pre-computing daily scans for test period...")
-    test_scans = compute_daily_scans(history, sim_dates=test_dates, max_workers=max_workers)
-    print(f"  {len(test_scans)} days ready\n")
+    test_scans = compute_all_scan_lookbacks(history, sim_dates=test_dates, max_workers=max_workers)
+    print(f"  Test scans ready\n")
 
     # 5. Grid search on train window
     print("--- TRAIN: Grid search ---")
@@ -96,19 +96,20 @@ def run_walk_forward(
     print(f"\n--- TEST: Top {TOP_N} param combos out-of-sample ---\n")
     top_rows   = train_df.head(TOP_N)
     top_params = top_rows[
-        ["min_rel_volume", "min_change_pct", "take_profit_pct", "stop_loss_pct"]
+        ["min_rel_volume", "min_change_pct", "take_profit_pct", "stop_loss_pct",
+         "max_position_pct", "vol_lookback"]
     ].to_dict("records")
 
     test_results = []
     test_curves  = []
     for params in top_params:
-        result = run_simulation(test_scans, params, slippage_pct, spread_pct)
+        result = run_simulation(test_scans[params["vol_lookback"]], params, slippage_pct, spread_pct)
         test_curves.append(result.pop("_equity_curve"))
         test_results.append(result)
 
     # 7. Print comparison table
     sep = "-" * 68
-    print(f"{'#':<4} {'min_rel_vol':>11}  {'min_chg%':>8}  {'tp%':>5}  {'sl%':>6}  {'Train%':>8}  {'Test%':>8}  {'Held up?':>8}")
+    print(f"{'#':<4} {'min_rel_vol':>11}  {'min_chg%':>8}  {'tp%':>5}  {'sl%':>6}  {'maxpos%':>7}  {'vol_lb':>6}  {'Train%':>8}  {'Test%':>8}  {'Held up?':>8}")
     print(sep)
     for i, (params, test_r) in enumerate(zip(top_params, test_results), 1):
         train_ret = top_rows.iloc[i - 1]["total_return_%"]
@@ -117,6 +118,7 @@ def run_walk_forward(
         print(
             f"{i:<4} {params['min_rel_volume']:>11}  {params['min_change_pct']:>8}  "
             f"{params['take_profit_pct']:>5}  {params['stop_loss_pct']:>6}  "
+            f"{params.get('max_position_pct', 0.20):>7}  {int(params.get('vol_lookback', 30)):>6}  "
             f"{train_ret:>+8.2f}%  {test_ret:>+8.2f}%  {held_up:>8}"
         )
 

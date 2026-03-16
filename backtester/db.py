@@ -97,7 +97,28 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_rwf_windows_run
                 ON rolling_wf_windows(run_id);
+
+            CREATE TABLE IF NOT EXISTS rwf_optimizer_runs (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT,
+                created_at TEXT,
+                notes      TEXT
+            );
         """)
+
+        # Migrate existing tables with new columns (safe on repeated calls)
+        migrations = [
+            ("test_results",    "max_position_pct", "REAL    DEFAULT 0.20"),
+            ("test_results",    "vol_lookback",      "INTEGER DEFAULT 30"),
+            ("rolling_wf_runs", "drawdown_threshold","REAL"),
+            ("rolling_wf_runs", "reopt_label",       "TEXT"),
+            ("rolling_wf_runs", "optimizer_run_id",  "INTEGER"),
+        ]
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            except Exception:
+                pass  # column already exists
 
 
 def save_run(
@@ -136,15 +157,16 @@ def save_results(run_id: int, results: list[dict]) -> list[int]:
             cur = conn.execute("""
                 INSERT INTO test_results
                     (run_id, rank, min_rel_volume, min_change_pct,
-                     take_profit_pct, stop_loss_pct, total_return_pct,
-                     final_value, realized_pnl, total_trades,
+                     take_profit_pct, stop_loss_pct, max_position_pct, vol_lookback,
+                     total_return_pct, final_value, realized_pnl, total_trades,
                      wins, losses, win_rate_pct)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 run_id, r["rank"], r["min_rel_volume"], r["min_change_pct"],
-                r["take_profit_pct"], r["stop_loss_pct"], r["total_return_%"],
-                r["final_value"], r["realized_pnl"], r["total_trades"],
-                r["wins"], r["losses"], r["win_rate_%"],
+                r["take_profit_pct"], r["stop_loss_pct"],
+                r.get("max_position_pct", 0.20), r.get("vol_lookback", 30),
+                r["total_return_%"], r["final_value"], r["realized_pnl"],
+                r["total_trades"], r["wins"], r["losses"], r["win_rate_%"],
             ))
             result_ids.append(cur.lastrowid)
     return result_ids
@@ -170,16 +192,54 @@ def save_rolling_wf_run(
     spread_pct: float,
     starting_cash: float,
     notes: str = "",
+    drawdown_threshold: float = None,
+    reopt_label: str = "",
+    optimizer_run_id: int = None,
 ) -> int:
     with get_connection() as conn:
         cur = conn.execute("""
             INSERT INTO rolling_wf_runs
                 (name, train_days, test_days, slippage_pct, spread_pct,
-                 starting_cash, created_at, notes)
-            VALUES (?,?,?,?,?,?,?,?)
+                 starting_cash, created_at, notes,
+                 drawdown_threshold, reopt_label, optimizer_run_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
         """, (name, train_days, test_days, slippage_pct, spread_pct,
-              starting_cash, datetime.now().isoformat(), notes))
+              starting_cash, datetime.now().isoformat(), notes,
+              drawdown_threshold, reopt_label, optimizer_run_id))
         return cur.lastrowid
+
+
+def save_optimizer_run(name: str, notes: str = "") -> int:
+    with get_connection() as conn:
+        cur = conn.execute("""
+            INSERT INTO rwf_optimizer_runs (name, created_at, notes)
+            VALUES (?,?,?)
+        """, (name, datetime.now().isoformat(), notes))
+        return cur.lastrowid
+
+
+def get_optimizer_results(optimizer_run_id: int) -> pd.DataFrame:
+    """Return summary of all rolling wf runs belonging to one optimizer run."""
+    with get_connection() as conn:
+        return pd.read_sql("""
+            SELECT r.reopt_label, r.drawdown_threshold, r.train_days, r.test_days,
+                   COUNT(w.id) as windows,
+                   AVG(w.test_return_pct) as avg_test_return,
+                   MIN(w.test_return_pct) as worst_quarter,
+                   MAX(w.test_return_pct) as best_quarter,
+                   SUM(CASE WHEN w.test_return_pct > 0 THEN 1 ELSE 0 END) as profitable_qtrs,
+                   SUM(w.beat_benchmark) as beat_count,
+                   MAX(w.strategy_balance) as peak_balance,
+                   (SELECT w2.strategy_balance FROM rolling_wf_windows w2
+                    WHERE w2.run_id = r.id ORDER BY w2.window_num DESC LIMIT 1) as final_balance,
+                   (SELECT w2.benchmark_balance FROM rolling_wf_windows w2
+                    WHERE w2.run_id = r.id ORDER BY w2.window_num DESC LIMIT 1) as final_benchmark
+            FROM rolling_wf_runs r
+            JOIN rolling_wf_windows w ON w.run_id = r.id
+            WHERE r.optimizer_run_id = ?
+            GROUP BY r.id
+            ORDER BY final_balance DESC
+        """, conn, params=(optimizer_run_id,))
 
 
 def save_rolling_wf_window(
