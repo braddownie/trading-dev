@@ -1,6 +1,6 @@
 # trading-dev
 
-A Python paper trading and market simulation tool. Pulls near-real-time market data for US and TSX stocks, simulates trades against live prices, evaluates strategy performance, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters — no real order execution.
+A Python paper trading and market simulation tool. Pulls near-real-time market data for S&P 500 stocks, simulates trades against live prices, evaluates strategy performance, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters — no real order execution.
 
 ---
 
@@ -21,7 +21,9 @@ A Python paper trading and market simulation tool. Pulls near-real-time market d
 
 | Component | File | Description |
 |-----------|------|-------------|
-| Grid search | `backtester/backtest.py` | Replays history across 300 parameter combinations |
+| Grid search | `backtester/backtest.py` | Replays history across 300 parameter combinations (S&P 500 only) |
+| Walk-forward | `backtester/walkforward.py` | Train Year 1, test Year 2 out-of-sample (S&P 500 only) |
+| Rolling walk-forward | `backtester/rolling_walkforward.py` | Quarterly windows 2015→present, compounds $5k, vs 7% benchmark (S&P 500 only) |
 | Database | `backtester/db.py` | SQLite storage for all runs, results, and equity curves |
 | Results DB | `backtester/results/trading.db` | All backtest runs (gitignored) |
 
@@ -66,9 +68,6 @@ python main.py report
 # Standard 1-year grid search (252 trading days)
 python -m backtester.backtest
 
-# Custom period and simulation window
-python -m backtester.backtest --period 65d --days 30
-
 # With slippage and spread costs
 python -m backtester.backtest --slippage 0.0005 --spread 0.0003
 
@@ -83,8 +82,30 @@ python -m backtester.backtest --name "1y_with_costs" --notes "Slippage model add
 | `--period` | `2y` | yfinance download period |
 | `--days` | `252` | Number of simulation days |
 | `--name` | auto | Run name (stored in DB) |
-| `--slippage` | `0.0` | Slippage % per side |
-| `--spread` | `0.0` | Spread % per side |
+| `--slippage` | `0.0` | Slippage fraction per side (e.g. `0.0005` = 0.05%) |
+| `--spread` | `0.0` | Spread fraction per side (e.g. `0.0003` = 0.03%) |
+| `--notes` | `""` | Notes stored with this run |
+
+### Walk-Forward Analysis
+
+```bash
+# Single walk-forward (train Year 1, test Year 2 out-of-sample)
+python main.py walkforward
+python main.py walkforward --slippage 0.0005 --spread 0.0003
+
+# Rolling walk-forward (recommended — run in a screen session, takes a while)
+python main.py rolling-walkforward
+python main.py rolling-walkforward --slippage 0.0005 --spread 0.0003
+```
+
+**Rolling walk-forward flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--slippage` | `0.0005` | Slippage fraction per side |
+| `--spread` | `0.0003` | Spread fraction per side |
+| `--workers` | cpu_count - 2 | Parallel worker processes |
+| `--name` | auto | Run name (stored in DB) |
 | `--notes` | `""` | Notes stored with this run |
 
 ---
@@ -93,7 +114,6 @@ python -m backtester.backtest --name "1y_with_costs" --notes "Slippage model add
 
 ### Data Layer
 - Fetches the S&P 500 constituent list from Wikipedia
-- Fetches the TSX 60 constituent list from Wikipedia (appends `.TO` suffix)
 - Downloads 32 days of daily OHLCV data via `yfinance` (~15 min delayed)
 - Filters tickers: price > $5, average volume > 500,000
 - Ranks by **relative volume** (today vs 30-day average)
@@ -113,9 +133,8 @@ python -m backtester.backtest --name "1y_with_costs" --notes "Slippage model add
 
 ### Scheduler
 - `python main.py start` loops every **15 minutes** (aligned with yfinance data refresh rate)
-- Checks NYSE and TSX calendars before each cycle using `pandas_market_calendars`
-- Skips cycles when all markets are closed (nights, weekends, holidays)
-- On days where only one market is open, filters tickers to that market only
+- Checks NYSE calendar before each cycle using `pandas_market_calendars`
+- Skips cycles when markets are closed (nights, weekends, holidays)
 - Handles errors gracefully — logs and retries next cycle
 
 ### Trade Log (Audit Trail)
@@ -128,18 +147,36 @@ Every trade is written to `data/trades.json` with:
 This file is the single source of truth for all P&L and tax calculations.
 
 ### Backtester
-- Downloads up to 2 years of daily OHLCV data for the full universe
+- Downloads daily OHLCV data for the S&P 500 universe
 - Pre-computes scan metrics for each simulation day (done once, reused across all combinations)
 - Grid searches 300 parameter combinations: `min_rel_volume` × `min_change_pct` × `take_profit_pct` × `stop_loss_pct`
-- Captures daily equity curve per combination (for charting)
+- Parallelized with `ProcessPoolExecutor` — near-linear speedup with available CPU cores
 - Optionally applies slippage and spread costs to simulate real-world execution
 - Saves all results to SQLite DB and exports a CSV per run
 
+### Walk-Forward Analysis
+Tests whether parameters learned from historical data hold up out-of-sample.
+
+**Single walk-forward** (`walkforward.py`):
+- Trains a full grid search on Year 1
+- Tests the top 3 parameter combinations on Year 2
+- Answers: did the best params from training actually hold up?
+
+**Rolling walk-forward** (`rolling_walkforward.py`):
+- Slides a 1-year training window / 1-quarter test window across all data from 2015 to present
+- Shifts by one quarter each iteration (~36 windows total)
+- For each window: grid search on train year → best params → out-of-sample test quarter
+- Compounds a starting $5,000 through every test quarter sequentially
+- Compares the final strategy balance against a 7% annual benchmark (compounded quarterly)
+- Answers: is this edge consistent across a decade of data, or was one period just lucky?
+
 ### Database
-All backtest runs persist to `backtester/results/trading.db` (SQLite):
-- `test_runs` — metadata per run (name, type, date range, costs, notes)
+All runs persist to `backtester/results/trading.db` (SQLite):
+- `test_runs` — metadata per grid search / walk-forward run
 - `test_results` — one row per parameter combination per run
 - `equity_curves` — daily portfolio value per combination (used for charting)
+- `rolling_wf_runs` — metadata per rolling walk-forward run
+- `rolling_wf_windows` — one row per quarterly window (params, returns, compounded balances)
 
 ---
 
@@ -190,6 +227,8 @@ Run `python main.py report` to see:
 ├── requirements.txt               # Python dependencies
 ├── backtester/
 │   ├── backtest.py                # Grid search backtester
+│   ├── walkforward.py             # Single walk-forward analysis
+│   ├── rolling_walkforward.py     # Rolling quarterly walk-forward
 │   ├── db.py                      # SQLite database layer
 │   └── results/                   # Gitignored
 │       ├── trading.db             # All backtest runs (SQLite)
@@ -231,14 +270,24 @@ Run `python main.py report` to see:
 - 298/300 combinations profitable
 - Key finding: take_profit=1% dominates (avg +64.2%) vs take_profit=7% (avg +16.3%)
 
-> Transaction cost modeling (slippage + spread) not yet applied — results represent frictionless simulation.
+### 1-year grid search (with transaction costs: slippage=0.05%, spread=0.03%)
+- **Best:** +79.3% — `min_rel_vol=1.5`, `min_change=0%`, `take_profit=1%`, `stop_loss=-5%`
+- **Average:** +21.4%, **Median:** +21.5%
+- 283/300 profitable, 17 losing
+- Transaction costs roughly halved average returns vs frictionless
+- stop_loss=-1% severely impacted (-51% hit rate) — wider stops (-2%+) held up better
+- Realistic annual expectation after costs: ~21% avg, ~79% best case
+
+### Rolling walk-forward (2015→present, realistic costs)
+- Results pending
 
 ---
 
 ## Notes
 
 - Data is ~15 minutes delayed (Yahoo Finance free tier) — suitable for paper trading simulation, not HFT
-- Dual-class TSX tickers (e.g. `TECK.B.TO`, `RCI.B.TO`) are not supported by yfinance and are silently skipped
+- The backtester uses S&P 500 only — this matches the intended live strategy via Alpaca (USD account, no per-trade FX)
+- The live bot scans S&P 500 + TSX 60 but will be narrowed to S&P 500 when connected to Alpaca
 - `BRK.B` (Berkshire Hathaway B) is not available via yfinance and is silently skipped
 - The bot does not short sell — only long positions
 - Backtest results reflect survivorship bias — only current index constituents are tested
