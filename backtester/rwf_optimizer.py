@@ -49,6 +49,7 @@ def run_optimizer(
     max_workers:  int   = None,
     name:         str   = "",
     notes:        str   = "",
+    test_mode:    bool  = False,
 ):
     start_time = datetime.now()
     total_runs = len(REOPT_CONFIGS) * len(DRAWDOWN_THRESHOLDS)
@@ -57,8 +58,19 @@ def run_optimizer(
 
     init_db()
 
+    # Test mode: 2 configs × 2 drawdown thresholds, history capped to 2 years (2 windows each)
+    if test_mode:
+        print("*** TEST MODE — reduced matrix, 2-year history cap ***\n")
+        reopt_configs     = [REOPT_CONFIGS[4], REOPT_CONFIGS[7]]  # quarterly_1y, 6mo_1y
+        drawdown_thresholds = [None, 15.0]
+        history_cap       = pd.Timestamp("2017-01-01")
+    else:
+        reopt_configs       = REOPT_CONFIGS
+        drawdown_thresholds = DRAWDOWN_THRESHOLDS
+        history_cap         = pd.Timestamp("2015-01-01")
+
     # Save parent optimizer run
-    opt_name = name or f"rwf_opt_{start_time.strftime('%Y%m%d_%H%M%S')}"
+    opt_name = name or f"rwf_opt{'_test' if test_mode else ''}_{start_time.strftime('%Y%m%d_%H%M%S')}"
     opt_run_id = save_optimizer_run(name=opt_name, notes=notes)
     print(f"Optimizer run ID: {opt_run_id}  ({opt_name})\n")
 
@@ -69,13 +81,16 @@ def run_optimizer(
 
     print("Downloading full history (max, capped to 2015-01-01 onward)...")
     history = load_history(tickers, period="max")
-    history = history[history["date"] >= pd.Timestamp("2015-01-01")].copy()
+    history = history[history["date"] >= history_cap].copy()
     print(f"  {history['ticker'].nunique()} tickers with valid data\n")
     print("=" * 70)
 
+    total_runs = len(reopt_configs) * len(drawdown_thresholds)
+    print(f"Running {total_runs} combinations\n")
+
     run_num = 0
-    for config in REOPT_CONFIGS:
-        for drawdown in DRAWDOWN_THRESHOLDS:
+    for config in reopt_configs:
+        for drawdown in drawdown_thresholds:
             run_num += 1
             dd_label = f"dd{drawdown}" if drawdown is not None else "no_dd"
             print(f"\nRUN {run_num}/{total_runs}: {config['label']} | {dd_label}")
@@ -151,6 +166,7 @@ def cli_main(argv=None):
     parser.add_argument("--workers",  default=None,   type=int,   help="Worker processes (default: cpu_count - 2)")
     parser.add_argument("--name",     default="",                  help="Run name")
     parser.add_argument("--notes",    default="",                  help="Notes")
+    parser.add_argument("--test",     action="store_true",         help="Test mode: 4 runs, 2-year history cap")
     args = parser.parse_args(argv)
 
     run_optimizer(
@@ -159,6 +175,7 @@ def cli_main(argv=None):
         max_workers  = args.workers,
         name         = args.name,
         notes        = args.notes,
+        test_mode    = args.test,
     )
 
 
