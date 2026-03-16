@@ -24,14 +24,8 @@ def get_tsx60_tickers() -> list[str]:
 
 
 def get_universe() -> list[str]:
-    print("Fetching S&P 500 tickers...")
     sp500 = get_sp500_tickers()
-    print(f"  {len(sp500)} tickers")
-
-    print("Fetching TSX 60 tickers...")
     tsx60 = get_tsx60_tickers()
-    print(f"  {len(tsx60)} tickers")
-
     return sp500 + tsx60
 
 
@@ -39,7 +33,6 @@ def get_universe() -> list[str]:
 
 def fetch_history(tickers: list[str], period: str = "32d", interval: str = "1d") -> dict:
     """Batch-download historical data for all tickers."""
-    print(f"\nDownloading historical data for {len(tickers)} tickers...")
     raw = yf.download(
         tickers,
         period=period,

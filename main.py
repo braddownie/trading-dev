@@ -5,72 +5,77 @@ from datetime import datetime
 
 from fetcher import get_universe, fetch_history, calculate_metrics
 from market import open_markets, filter_tickers_to_open_markets, market_status_line
-from simulator import Portfolio
+from simulator import Portfolio, STARTING_CASH
 from strategy import buy_signals, sell_signals
 from tax_report import generate_report
 
 CYCLE_INTERVAL_SECONDS = 15 * 60  # 15 minutes
+_cycle_count = 0
 
 
 def run_cycle(markets: list[str]):
     """One full scan → strategy → execute cycle, filtered to open markets."""
-    print(f"\n{'='*60}")
-    print(f"  Trading cycle — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  {market_status_line(markets)}")
-    print(f"{'='*60}\n")
+    global _cycle_count
+    _cycle_count += 1
+    ts = datetime.now().strftime('%H:%M:%S')
 
-    # 1. Scan — fetch full universe then filter to open markets
-    print("Step 1/3 — Scanning market...")
+    # Suppress yfinance/urllib noise by redirecting during download
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    # 1. Scan
     all_tickers = get_universe()
     active_tickers = filter_tickers_to_open_markets(all_tickers, markets)
-    print(f"  {len(active_tickers)} tickers active ({market_status_line(markets)})")
-
     raw = fetch_history(active_tickers)
     df = calculate_metrics(active_tickers, raw)
 
     if df.empty:
-        print("  No candidates found after filtering.")
+        print(f"[{ts}] Cycle #{_cycle_count} — {market_status_line(markets)} — no data, skipping.")
         return
 
     current_prices = dict(zip(df["ticker"], df["price"]))
 
     # 2. Strategy
-    print("\nStep 2/3 — Evaluating signals...")
     portfolio = Portfolio()
-
-    # Only evaluate sell signals for positions in open markets
-    open_positions = {
-        t: p for t, p in portfolio.positions.items()
-        if t in current_prices
-    }
+    open_positions = {t: p for t, p in portfolio.positions.items() if t in current_prices}
     sells = sell_signals(open_positions, current_prices)
     buys = buy_signals(df, portfolio.positions)
 
-    # 3. Execute sells first (free up cash), then buys
-    print("\nStep 3/3 — Executing trades...")
-    executed = 0
+    # 3. Execute sells first, then buys
+    trade_lines = []
 
-    if not sells and not buys:
-        print("  No signals this cycle.")
+    for sig in sells:
+        trade = portfolio.sell(sig.ticker, sig.price, sig.snapshot)
+        if trade:
+            trade_lines.append(
+                f"  SELL {sig.ticker:<10} @ ${sig.price:.2f}  P&L: ${trade['realized_pnl']:+.4f}  ({sig.reason})"
+            )
+
+    for sig in buys:
+        snapshot = sig.snapshot if isinstance(sig.snapshot, dict) else sig.snapshot.to_dict()
+        trade = portfolio.buy(sig.ticker, sig.price, snapshot.get("atr_14", 1.0), snapshot)
+        if trade:
+            trade_lines.append(
+                f"  BUY  {sig.ticker:<10} {trade['shares']:.4f} shares @ ${sig.price:.2f} = ${trade['value']:.2f}  ({sig.reason})"
+            )
+
+    # 4. Build compact summary line
+    pv = portfolio.portfolio_value(current_prices)
+    pos_summary = "  ".join(
+        f"{t} {((current_prices.get(t, p['avg_cost']) - p['avg_cost']) / p['avg_cost'] * 100):+.2f}%"
+        for t, p in sorted(portfolio.positions.items())
+    )
+
+    # 5. Print cycle output
+    print(f"\n[{ts}] Cycle #{_cycle_count} — {market_status_line(markets)}")
+    if trade_lines:
+        for line in trade_lines:
+            print(line)
     else:
-        for sig in sells:
-            trade = portfolio.sell(sig.ticker, sig.price, sig.snapshot)
-            if trade:
-                print(f"  SELL {sig.ticker:<10}  @ ${sig.price:.2f}  P&L: ${trade['realized_pnl']:+.4f}  ({sig.reason})")
-                executed += 1
-
-        for sig in buys:
-            snapshot = sig.snapshot if isinstance(sig.snapshot, dict) else sig.snapshot.to_dict()
-            trade = portfolio.buy(sig.ticker, sig.price, snapshot.get("atr_14", 1.0), snapshot)
-            if trade:
-                print(f"  BUY  {sig.ticker:<10}  {trade['shares']:.4f} shares @ ${sig.price:.2f}  = ${trade['value']:.2f}  ({sig.reason})")
-                executed += 1
-            else:
-                print(f"  SKIP {sig.ticker:<10}  insufficient cash")
-
-        print(f"\n  {executed} trade(s) executed.")
-
-    portfolio.summary(current_prices)
+        print(f"  No trades executed.")
+    print(f"  Portfolio: ${pv:.2f} ({pv - STARTING_CASH:+.2f})  Cash: ${portfolio.cash:.2f}  Positions: {len(portfolio.positions)}")
+    if pos_summary:
+        print(f"  {pos_summary}")
 
 
 def cmd_start():
