@@ -73,63 +73,92 @@ def load_history(tickers: list[str], period: str = "2y") -> pd.DataFrame:
 
 # --- Per-day scan ---
 
-def compute_daily_scans(history: pd.DataFrame, simulation_days: int = 252) -> dict:
+# Module-level globals for scan worker processes (required for pickling)
+_worker_history = None
+
+def _init_scan_worker(history: pd.DataFrame):
+    global _worker_history
+    _worker_history = history
+
+def _scan_one_date(sim_date) -> tuple:
+    """Compute scan DataFrame for a single date. Runs in worker process."""
+    rows = []
+    for ticker, grp in _worker_history[_worker_history["date"] <= sim_date].groupby("ticker"):
+        grp = grp.sort_values("date")
+        if len(grp) < 2:
+            continue
+
+        today      = grp.iloc[-1]
+        prev       = grp.iloc[-2]
+        price      = today["close"]
+        prev_close = prev["close"]
+
+        if price < MIN_PRICE:
+            continue
+
+        vol_today = today["volume"]
+        avg_vol   = grp["volume"].iloc[-31:-1].mean()
+
+        if avg_vol < MIN_AVG_VOL:
+            continue
+
+        rel_volume = round(vol_today / avg_vol, 2) if avg_vol > 0 else 0
+        change_pct = round(((price - prev_close) / prev_close) * 100, 2)
+
+        highs  = grp["high"].iloc[-15:]
+        lows   = grp["low"].iloc[-15:]
+        closes = grp["close"].iloc[-15:]
+        tr = pd.concat([
+            highs - lows,
+            (highs - closes.shift()).abs(),
+            (lows - closes.shift()).abs(),
+        ], axis=1).max(axis=1)
+        atr = round(tr.iloc[-14:].mean(), 2)
+
+        rows.append({
+            "ticker":     ticker,
+            "price":      round(price, 2),
+            "change_%":   change_pct,
+            "rel_volume": rel_volume,
+            "atr_14":     atr,
+        })
+
+    if rows:
+        return sim_date, (
+            pd.DataFrame(rows)
+            .sort_values("rel_volume", ascending=False)
+            .reset_index(drop=True)
+        )
+    return sim_date, None
+
+
+def compute_daily_scans(
+    history: pd.DataFrame,
+    simulation_days: int = 252,
+    sim_dates: list = None,
+    max_workers: int = None,
+) -> dict:
     """
     Pre-compute a scan DataFrame for each simulation day.
     Returns {date: scan_df} — computed once, reused across all param combos.
+    Pass sim_dates explicitly to restrict to a specific window (e.g. walk-forward splits).
     """
     all_dates = sorted(history["date"].unique())
-    sim_dates = all_dates[-simulation_days:]
+    if sim_dates is None:
+        sim_dates = all_dates[-simulation_days:]
+
+    workers = max_workers or max(1, (os.cpu_count() or 2) - 2)
+    print(f"  Running across {workers} workers...")
 
     daily_scans = {}
-    for sim_date in sim_dates:
-        rows = []
-        for ticker, grp in history[history["date"] <= sim_date].groupby("ticker"):
-            grp = grp.sort_values("date")
-            if len(grp) < 2:
-                continue
-
-            today      = grp.iloc[-1]
-            prev       = grp.iloc[-2]
-            price      = today["close"]
-            prev_close = prev["close"]
-
-            if price < MIN_PRICE:
-                continue
-
-            vol_today = today["volume"]
-            avg_vol   = grp["volume"].iloc[-31:-1].mean()
-
-            if avg_vol < MIN_AVG_VOL:
-                continue
-
-            rel_volume = round(vol_today / avg_vol, 2) if avg_vol > 0 else 0
-            change_pct = round(((price - prev_close) / prev_close) * 100, 2)
-
-            highs  = grp["high"].iloc[-15:]
-            lows   = grp["low"].iloc[-15:]
-            closes = grp["close"].iloc[-15:]
-            tr = pd.concat([
-                highs - lows,
-                (highs - closes.shift()).abs(),
-                (lows - closes.shift()).abs(),
-            ], axis=1).max(axis=1)
-            atr = round(tr.iloc[-14:].mean(), 2)
-
-            rows.append({
-                "ticker":     ticker,
-                "price":      round(price, 2),
-                "change_%":   change_pct,
-                "rel_volume": rel_volume,
-                "atr_14":     atr,
-            })
-
-        if rows:
-            daily_scans[sim_date] = (
-                pd.DataFrame(rows)
-                .sort_values("rel_volume", ascending=False)
-                .reset_index(drop=True)
-            )
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_scan_worker,
+        initargs=(history,),
+    ) as pool:
+        for sim_date, scan_df in pool.map(_scan_one_date, sim_dates):
+            if scan_df is not None:
+                daily_scans[sim_date] = scan_df
 
     return daily_scans
 
@@ -353,7 +382,7 @@ if __name__ == "__main__":
 
     # 3. Daily scans
     print(f"Pre-computing daily scan data for {args.days} simulation days...")
-    daily_scans = compute_daily_scans(history, simulation_days=args.days)
+    daily_scans = compute_daily_scans(history, simulation_days=args.days, max_workers=args.workers)
     print(f"  {len(daily_scans)} trading days ready\n")
 
     # 4. Grid search
