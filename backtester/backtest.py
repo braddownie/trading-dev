@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fetcher import get_universe
 
 RESULTS_FILE = Path(__file__).parent / "results" / "results_1y.csv"
-STARTING_CASH = 100.0
+STARTING_CASH = 5000.0
 MIN_PRICE     = 5.0
 MIN_AVG_VOL   = 500_000
 

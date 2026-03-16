@@ -7,7 +7,7 @@ DATA_DIR = Path("data")
 PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
 TRADES_FILE = DATA_DIR / "trades.json"
 
-STARTING_CASH = 100.0
+STARTING_CASH = 5000.0
 MAX_POSITION_PCT = 0.20  # no single position > 20% of portfolio
 MIN_POSITION_PCT = 0.05  # no single position < 5% of portfolio
 
