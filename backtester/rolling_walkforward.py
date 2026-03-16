@@ -308,7 +308,7 @@ def cli_main(argv=None):
     parser.add_argument("--drawdown",   default=None,   type=float, help="Max drawdown %% before suppressing buys (default: None)")
     parser.add_argument("--train-days", default=252,    type=int,   help="Training window in trading days (default: 252)")
     parser.add_argument("--test-days",  default=63,     type=int,   help="Test window in trading days (default: 63)")
-    parser.add_argument("--workers",    default=None,   type=int,   help="Worker processes (default: cpu_count - 2)")
+    parser.add_argument("--workers",    default=None,   type=int,   help="Worker processes (default: cpu_count - 1)")
     parser.add_argument("--name",       default="",                  help="Run name")
     parser.add_argument("--notes",      default="",                  help="Notes")
     args = parser.parse_args(argv)

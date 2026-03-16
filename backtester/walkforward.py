@@ -159,7 +159,7 @@ def cli_main(argv=None):
     parser.add_argument("--test-years",  default=1,    type=int,   help="Test window in years (default: 1)")
     parser.add_argument("--slippage",    default=0.0,  type=float, help="Slippage %% per side (default: 0.0)")
     parser.add_argument("--spread",      default=0.0,  type=float, help="Spread %% per side (default: 0.0)")
-    parser.add_argument("--workers",     default=None, type=int,   help="Worker processes (default: cpu_count - 2)")
+    parser.add_argument("--workers",     default=None, type=int,   help="Worker processes (default: cpu_count - 1)")
     parser.add_argument("--name",        default="",               help="Run name")
     parser.add_argument("--notes",       default="",               help="Notes")
     args = parser.parse_args(argv)

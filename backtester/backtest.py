@@ -150,7 +150,7 @@ def compute_daily_scans(
     if sim_dates is None:
         sim_dates = all_dates[-simulation_days:]
 
-    workers = max_workers or max(1, (os.cpu_count() or 2) - 2)
+    workers = max_workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"  Running across {workers} workers (vol_lookback={vol_lookback})...")
 
     daily_scans = {}
@@ -366,7 +366,7 @@ def run_grid_search(
     keys   = list(PARAM_GRID.keys())
     combos = [dict(zip(keys, values)) for values in itertools.product(*PARAM_GRID.values())]
     total   = len(combos)
-    workers = max_workers or max(1, (os.cpu_count() or 2) - 2)
+    workers = max_workers or max(1, (os.cpu_count() or 2) - 1)
 
     print(f"Running {total} parameter combinations across {workers} workers...\n")
 
@@ -414,7 +414,7 @@ if __name__ == "__main__":
     parser.add_argument("--spread",   default=0.0,   type=float, help="Spread per side (default: 0.0)")
     parser.add_argument("--drawdown", default=None,  type=float, help="Max drawdown %% before suppressing buys (default: None)")
     parser.add_argument("--notes",    default="",    help="Notes to store with this run")
-    parser.add_argument("--workers",  default=None,  type=int, help="Worker processes (default: cpu_count - 2)")
+    parser.add_argument("--workers",  default=None,  type=int, help="Worker processes (default: cpu_count - 1)")
     args = parser.parse_args()
 
     start_time = datetime.now()

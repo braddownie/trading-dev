@@ -118,7 +118,7 @@ python main.py rwf-optimize --test
 | `--drawdown` | `None` | Max drawdown % before suppressing new buys |
 | `--train-days` | `252` | Training window in trading days |
 | `--test-days` | `63` | Test window in trading days |
-| `--workers` | cpu_count - 2 | Parallel worker processes |
+| `--workers` | cpu_count - 1 | Parallel worker processes |
 | `--name` | auto | Run name (stored in DB) |
 | `--notes` | `""` | Notes stored with this run |
 
@@ -128,7 +128,7 @@ python main.py rwf-optimize --test
 |------|---------|-------------|
 | `--slippage` | `0.0005` | Slippage fraction per side |
 | `--spread` | `0.0003` | Spread fraction per side |
-| `--workers` | cpu_count - 2 | Parallel worker processes |
+| `--workers` | cpu_count - 1 | Parallel worker processes |
 | `--name` | auto | Run name (stored in DB) |
 | `--notes` | `""` | Notes stored with this run |
 | `--resume` | `None` | Resume an existing optimizer run by ID |

@@ -171,7 +171,7 @@ def cli_main(argv=None):
     parser = argparse.ArgumentParser(description="Rolling walk-forward optimizer (45-run matrix)")
     parser.add_argument("--slippage", default=0.0005, type=float, help="Slippage per side (default: 0.0005)")
     parser.add_argument("--spread",   default=0.0003, type=float, help="Spread per side (default: 0.0003)")
-    parser.add_argument("--workers",  default=None,   type=int,   help="Worker processes (default: cpu_count - 2)")
+    parser.add_argument("--workers",  default=None,   type=int,   help="Worker processes (default: cpu_count - 1)")
     parser.add_argument("--name",     default="",                  help="Run name")
     parser.add_argument("--notes",    default="",                  help="Notes")
     parser.add_argument("--test",     action="store_true",         help="Test mode: 4 runs, 2-year history cap")
