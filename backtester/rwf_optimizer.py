@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fetcher import get_sp500_tickers
 from backtester.backtest import load_history, STARTING_CASH
 from backtester.db import init_db, save_optimizer_run, get_optimizer_results
-from backtester.rolling_walkforward import run_rolling_walk_forward, ANNUAL_BENCH, quarterly_bench_rate
+from backtester.rolling_walkforward import run_rolling_walk_forward
 
 # --- Test matrix ---
 
@@ -101,9 +101,10 @@ def run_optimizer(
 def _print_summary(opt_run_id: int, start_time: datetime):
     results = get_optimizer_results(opt_run_id)
 
-    elapsed = (datetime.now() - start_time).seconds
+    elapsed = int((datetime.now() - start_time).total_seconds())
+    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     print(f"\n{'='*120}")
-    print(f"RWF OPTIMIZER RESULTS  (completed in {elapsed}s)")
+    print(f"RWF OPTIMIZER RESULTS  (completed in {h}h {m}m {s}s)")
     print(f"{'='*120}\n")
 
     if results.empty:

@@ -207,8 +207,9 @@ def run_rolling_walk_forward(
     # 5. Print full summary
     _print_summary(window_rows, STARTING_CASH)
 
-    elapsed = (datetime.now() - start_time).seconds
-    print(f"Completed in {elapsed}s")
+    elapsed = int((datetime.now() - start_time).total_seconds())
+    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+    print(f"Completed in {h}h {m}m {s}s")
     print(f"DB run id : {run_id}  ({run_name})")
 
 
@@ -219,13 +220,13 @@ def _print_summary(rows: list[dict], starting_cash: float):
     print("ROLLING WALK-FORWARD SUMMARY")
     print(f"{'='*108}\n")
 
-    print(f"{'Win':>3}  {'Test Quarter':<23}  {'rv/chg/tp/sl':>20}  {'Train%':>7}  {'Test%':>7}  {'Strategy$':>11}  {'Benchmark$':>11}  {'Beat?':>5}")
+    print(f"{'Win':>3}  {'Test Quarter':<23}  {'rv/chg/tp/sl/maxpos/lb':<28}  {'Train%':>7}  {'Test%':>7}  {'Strategy$':>11}  {'Benchmark$':>11}  {'Beat?':>5}")
     print(sep)
 
     for r in rows:
         period = f"{r['test_start']}→{r['test_end']}"
         print(
-            f"{r['window']:>3}  {period:<23}  {r['params']:>20}  "
+            f"{r['window']:>3}  {period:<23}  {r['params']:<28}  "
             f"{r['train_ret']:>+7.2f}%  {r['test_ret']:>+7.2f}%  "
             f"${r['strat_bal']:>10,.2f}  ${r['bench_bal']:>10,.2f}  {r['beat']:>5}"
         )
