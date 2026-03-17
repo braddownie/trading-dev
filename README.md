@@ -1,5 +1,7 @@
 # trading-dev
 
+> ⚠️ **DISCLAIMER:** This project is for educational and research purposes only. It is NOT financial advice. Do not use this software with real money without fully understanding the risks. The author assumes no liability for any financial losses. Always test with paper trading first.
+
 A Python paper trading and market simulation tool built from scratch as a learning project in quantitative strategy development. Pulls near-real-time market data for S&P 500 stocks, simulates trades against live prices, evaluates strategy performance out-of-sample, calculates tax implications under Canadian tax law, and backtests + optimizes strategy parameters across a decade of market history — no real order execution.
 
 ---
